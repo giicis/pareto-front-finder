@@ -160,7 +160,6 @@ def main(arguments: dict):
     :param arguments: CLI Arguments
     :type arguments: dict
     """
-    print("pid: ",os.getpid())
     time_struct = dict()
     time_struct[START] = time.time()
     c_model = create_model(arguments['data_path'])
