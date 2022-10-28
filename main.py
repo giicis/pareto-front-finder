@@ -8,7 +8,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from itertools import pairwise
+from more_itertools import pairwise
 from multiprocessing import Pool
 from typing import List, Dict
 
@@ -41,16 +41,20 @@ class RunResult:
     x: str
     y: str
     time: float
+    pid: int
 
     @classmethod
-    def from_args(cls, iteration: int, profit: float, cost: float, x: str, y: str, elapsed: float) -> 'RunResult':
+    def from_args(
+            cls, iteration: int, profit: float, cost: float, x: str, y: str, elapsed: float
+    ) -> 'RunResult':
         return RunResult(
             iteration=iteration,
             profit=profit,
             cost=cost,
             x=x,
             y=y,
-            time=elapsed
+            time=elapsed,
+            pid=os.getpid()
         )
 
 
@@ -140,16 +144,14 @@ def main(arguments: dict):
     :param arguments: CLI Arguments
     :type arguments: dict
     """
-    print(f'El padre es {os.getpid()}')
+    lower = 0
+    upper = 2000
     if arguments['parallel'] == 'False':
-        results = find_pareto_front_in_cost_range(arguments)
+        results = find_pareto_front_in_cost_range(arguments, lower=lower, upper=upper)
     else:
-        lower = 0
-        upper = 2000
         args = [
             (arguments, l, u) for l, u in pairwise(range(lower, upper, int((upper - lower) / SOLVER_THREADS)))
         ]
-        [print(f'args is: {a[1:]}') for a in args]
         with Pool(SOLVER_THREADS) as p:
             nested_results = p.starmap(find_pareto_front_in_cost_range, args)
             results = [item for sublist in nested_results for item in sublist]
