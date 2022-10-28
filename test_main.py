@@ -4,7 +4,7 @@ from unittest import TestCase
 
 from pyomo.opt import SolverFactory
 
-from main_modificado_v02 import create_model, run, RunResult
+from main import create_model, run, RunResult
 
 
 class MainUnitTest(TestCase):

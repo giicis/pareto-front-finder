@@ -8,20 +8,20 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List
 
 from pyomo.core.base.PyomoModel import Model
 from pyomo.environ import SolverFactory, summation
 from pyomo.environ import value
 from pyomo.opt import OptSolver
 
-import nrp
+from nrp import NrpModel
 
 START = 'start'
 DAT_LD = 'data_load'
 MD_RUN = 'model_run'
 PLOT = 'plot'
-SOLVER_THREADS = 16
+SOLVER_THREADS = os.cpu_count()
 
 
 class EnhancedJSONEncoder(json.JSONEncoder):
@@ -41,45 +41,18 @@ class RunResult:
     time: float
 
     @classmethod
-    def from_args(self, iteration: int, profit: float, cost: float, x: str, y: str, time: float) -> 'RunResult':
+    def from_args(cls, iteration: int, profit: float, cost: float, x: str, y: str, elapsed: float) -> 'RunResult':
         return RunResult(
             iteration=iteration,
             profit=profit,
             cost=cost,
             x=x,
             y=y,
-            time=time
+            time=elapsed
         )
 
 
-def create_model(data_path: str) -> Model:
-    """ Creates a concrete model of the nrp problem
-        :param data_path: Where the data file is located
-        :return: nrp concrete model
-    """
-    return nrp.abstract_model().create_instance(data_path)
-
-
-def fill_model(instance, e_constraint_val: float = None):
-    """Fills an abstract  model with e_constraint if e_constraint_val != None
-    :param instance: A concrete model
-    :param e_constraint_val: Value to profit the cost value, defaults to None
-    :param e_constraint_val: int, optional
-    :return: Concrete pyomo nrp model
-    """
-
-    if e_constraint_val:
-        try:
-            e_constraint_val = int(e_constraint_val)
-            instance.l[1] = summation(instance.cost, instance.x) <= e_constraint_val
-        except KeyError:
-            instance.l.add(summation(instance.cost, instance.x) <= e_constraint_val)
-    return instance
-
-
 def run(concrete_model: Model, solver: OptSolver, current_iteration: int) -> RunResult:
-    """
-    """
     solve_kwargs = {}
     if solver.name != 'glpk':
         solve_kwargs['warmstart'] = True
@@ -106,36 +79,7 @@ def run(concrete_model: Model, solver: OptSolver, current_iteration: int) -> Run
     )
 
 
-def write_times(time_struct: dict):
-    """Writes all the times
-    :param time_struct: Dictionary of times
-    :type time_struct: dict
-    """
-
-    load_t = time_struct[DAT_LD] - time_struct[START]
-    model_run_t = time_struct[MD_RUN] - time_struct[DAT_LD]
-    plot_t = time_struct[PLOT] - time_struct[MD_RUN]
-    total_t = time_struct[PLOT] - time_struct[START]
-    with open('./output/times.txt', 'w+') as file:
-        file.write('Data load: ' + ' %s seconds\t %s %% \n' %
-                   (round(load_t, 7), round(load_t * 100 / total_t)))
-        file.write('Model run: ' + ' %s seconds\t %s %% \n' %
-                   (round(model_run_t, 7), round(model_run_t * 100 / total_t)))
-        file.write('     Plot: ' + ' %s seconds\t %s %% \n' %
-                   (round(plot_t, 7), round(plot_t * 100 / total_t)))
-        file.write('    TOTAL: ' + ' %s seconds\t %s %% \n' %
-                   (round(total_t, 7), round(total_t * 100 / total_t)))
-
-
-def model_run(instance, arguments: dict) -> List[RunResult]:
-    """Runs the model and retrieves all the gotten results
-    :param instance: A concrete pyomo model
-    :param arguments: Command-line arguments
-    :type arguments: dict
-    :return: List of the gotten results (iteration, cost, profit)
-    :rtype: list
-    """
-
+def find_pareto_front(arguments: dict) -> List[RunResult]:
     def cost_l(x):
         return x > float(arguments['cost']) if arguments['cost'] else lambda x: True
 
@@ -146,6 +90,7 @@ def model_run(instance, arguments: dict) -> List[RunResult]:
     results = []
     epsilon = float(arguments['epsilon'])
     inform_each = int(arguments['informEach'])
+    model = NrpModel(arguments['data_path'])
 
     solver = SolverFactory(arguments['solver'])  # Create solver to use
     solver_supports_threads = solver.name in ['cbc', 'cplex']
@@ -153,8 +98,7 @@ def model_run(instance, arguments: dict) -> List[RunResult]:
         solver.options['threads'] = SOLVER_THREADS
 
     iteration = 0
-    model = fill_model(instance)
-    results.append(run(model, solver, iteration))
+    results.append(run(model.model, solver, iteration))
 
     iteration += 1
     max_iterations = int(arguments['iterations'])
@@ -164,8 +108,8 @@ def model_run(instance, arguments: dict) -> List[RunResult]:
             and cost_l(results[-1].cost) \
             and profit_l(results[-1].profit):
 
-        model = fill_model(instance, results[-1].cost - epsilon)
-        results.append(run(model, solver, iteration))
+        model.update_cost_constraint(results[-1].cost - epsilon)
+        results.append(run(model.model, solver, iteration))
 
         if iteration % inform_each == 0:
             print('Iteration {}: Cost = {}, Profit = {}'.format(
@@ -191,19 +135,8 @@ def main(arguments: dict):
     :param arguments: CLI Arguments
     :type arguments: dict
     """
-    time_struct = dict()
-    time_struct[START] = time.time()
-    c_model = create_model(arguments['data_path'])
-
-    time_struct[DAT_LD] = time.time()
-    results = model_run(c_model, arguments)
-    time_struct[MD_RUN] = time.time()
-
-    time_struct[PLOT] = time.time()
-
+    results = find_pareto_front(arguments)
     write_results(results)
-
-    # write_times(time_struct)
 
 
 def get_parser():

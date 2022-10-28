@@ -1,64 +1,81 @@
 from __future__ import division
-from pyomo.environ import NonNegativeIntegers, AbstractModel, Param, RangeSet, Set, Binary, Var, summation, Objective,Constraint, maximize, ConstraintList, SolverFactory
+from pyomo.environ import NonNegativeIntegers, AbstractModel, Param, RangeSet, Set, Binary, Var, summation, Objective, \
+    Constraint, maximize, ConstraintList, SolverFactory
 import sys
 
+from pyomo.core.base.PyomoModel import Model
 
-def abstract_model():
-    """
-    Creates an abstract model for nrp problem
-    """
 
-    # Abstract model definition
+class NrpModel:
+    def abstract_model(self, ):
+        """
+        Creates an abstract model for nrp problem
+        """
 
-    # creating the actual model
-    nrp = AbstractModel()
+        # Abstract model definition
 
-    # Creation of parameters
-    nrp.number_of_requierements = Param(within=NonNegativeIntegers)
-    nrp.number_of_costumers = Param(within=NonNegativeIntegers)
-    nrp.max_cost = Param(within=NonNegativeIntegers, mutable=True)
+        # creating the actual model
+        nrp = AbstractModel()
 
-    # Creation of sets
-    nrp.requierements = RangeSet(1, nrp.number_of_requierements)
-    nrp.customers = RangeSet(1, nrp.number_of_costumers)
-    nrp.profit = Param(nrp.customers)  # Profit of each customer
-    nrp.cost = Param(nrp.requierements)  # Cost of requierement
-    # (i,j) requierement i should be implemented if j is implemented
-    nrp.prerequisite = Set(within=nrp.requierements * nrp.requierements)
-    # (i,k) this relation exists if stakeholder k has interest on requierement i
-    nrp.interest = Set(within=nrp.customers * nrp.requierements)
+        # Creation of parameters
+        nrp.number_of_requierements = Param(within=NonNegativeIntegers)
+        nrp.number_of_costumers = Param(within=NonNegativeIntegers)
+        nrp.max_cost = Param(within=NonNegativeIntegers, mutable=True)
 
-    # Creation of variables
-    # = 1 if requierement i is implemented in the next release, otherwise 0
-    nrp.x = Var(nrp.requierements, domain=Binary)
-    # = 1 if all  stakeholder i's interests are satisfied in the next release, otherwise 0
-    nrp.y = Var(nrp.customers, domain=Binary)
+        # Creation of sets
+        nrp.requierements = RangeSet(1, nrp.number_of_requierements)
+        nrp.customers = RangeSet(1, nrp.number_of_costumers)
+        nrp.profit = Param(nrp.customers)  # Profit of each customer
+        nrp.cost = Param(nrp.requierements)  # Cost of requierement
+        # (i,j) requierement i should be implemented if j is implemented
+        nrp.prerequisite = Set(within=nrp.requierements * nrp.requierements)
+        # (i,k) this relation exists if stakeholder k has interest on requierement i
+        nrp.interest = Set(within=nrp.customers * nrp.requierements)
 
-    # Objetive function
+        # Creation of variables
+        # = 1 if requierement i is implemented in the next release, otherwise 0
+        nrp.x = Var(nrp.requierements, domain=Binary)
+        # = 1 if all  stakeholder i's interests are satisfied in the next release, otherwise 0
+        nrp.y = Var(nrp.customers, domain=Binary)
 
-    def obj_expression(nrp):
-        return summation(nrp.profit, nrp.y) - summation(nrp.cost, nrp.x) # maximize profit
+        # Objetive function
 
-    nrp.OBJ = Objective(rule=obj_expression, sense=maximize)
+        def obj_expression(nrp):
+            return summation(nrp.profit, nrp.y) - summation(nrp.cost, nrp.x)  # maximize profit
 
-    # Defintion of cost constraint rule
-    def cost_constraint_rule(nrp):
-        return summation(nrp.cost, nrp.x) <= nrp.max_cost
+        nrp.OBJ = Objective(rule=obj_expression, sense=maximize)
 
-    nrp.cost_constraint = Constraint(rule=cost_constraint_rule)
+        # Defintion of cost constraint rule
+        def cost_constraint_rule(nrp):
+            return summation(nrp.cost, nrp.x) <= nrp.max_cost
 
-    # Defition of precedence constraint
-    def precedence_constraint_rule(nrp, i, j):
-        return nrp.x[i] >= nrp.x[j]
-    nrp.precedence_constraint = Constraint(nrp.prerequisite, rule=precedence_constraint_rule)
+        nrp.cost_constraint = Constraint(rule=cost_constraint_rule)
 
-    # Definition of interest constraint
-    # Each tuple in nrp.dat.interest is inverted, so the constraint is also inverted
-    def interest_constraint_rule(nrp, i, k):
-        return nrp.y[i] <= nrp.x[k]
-    nrp.interest_constraint = Constraint(nrp.interest, rule=interest_constraint_rule)
-    nrp.l = ConstraintList()
-    return nrp
+        # Defition of precedence constraint
+        def precedence_constraint_rule(nrp, i, j):
+            return nrp.x[i] >= nrp.x[j]
+
+        nrp.precedence_constraint = Constraint(nrp.prerequisite, rule=precedence_constraint_rule)
+
+        # Definition of interest constraint
+        # Each tuple in nrp.dat.interest is inverted, so the constraint is also inverted
+        def interest_constraint_rule(nrp, i, k):
+            return nrp.y[i] <= nrp.x[k]
+
+        nrp.interest_constraint = Constraint(nrp.interest, rule=interest_constraint_rule)
+        nrp.l = ConstraintList()
+        return nrp
+
+    def update_cost_constraint(self, rhs: float = None):
+        if rhs is None:
+            return
+        try:
+            self.model.l[1] = summation(self.model.cost, self.model.x) <= rhs
+        except KeyError:
+            self.model.l.add(summation(self.model.cost, self.model.x) <= rhs)
+
+    def __init__(self, data_path: str):
+        self.model: Model = self.abstract_model().create_instance(data_path)
 
 
 def Main():
@@ -73,17 +90,17 @@ def Main():
     data_file = sys.argv[2]
 
     solver = SolverFactory(solver_name)
-    nrp = abstract_model().create_instance(data_file)
+    nrp = NrpModel(data_file)
 
     res = solver.solve(nrp)
+    # TODO: fix this with value()
     profits = sum(nrp.profit[c] * nrp.y[c].value for c in nrp.customers)
     costs = sum(nrp.cost[r] * nrp.x[r].value for r in nrp.requierements)
-   
 
     res.write()
 
-    print("Profit: ",profits)
-    print("Costs: ",costs)
+    print("Profit: ", profits)
+    print("Costs: ", costs)
 
 
 if __name__ == "__main__":
