@@ -8,7 +8,9 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import List
+from itertools import pairwise
+from multiprocessing import Pool
+from typing import List, Dict
 
 from pyomo.core.base.PyomoModel import Model
 from pyomo.environ import SolverFactory, summation
@@ -79,7 +81,7 @@ def run(concrete_model: Model, solver: OptSolver, current_iteration: int) -> Run
     )
 
 
-def find_pareto_front(arguments: dict) -> List[RunResult]:
+def find_pareto_front_in_cost_range(arguments: dict, lower: float = None, upper: float = None) -> List[RunResult]:
     def cost_l(x):
         return x > float(arguments['cost']) if arguments['cost'] else lambda x: True
 
@@ -87,10 +89,16 @@ def find_pareto_front(arguments: dict) -> List[RunResult]:
         return x > float(arguments['profit']
                          ) if arguments['profit'] else lambda x: True
 
+    print(f'Running find pareto between [{lower};{upper}] in {os.getpid()}')
+
     results = []
     epsilon = float(arguments['epsilon'])
     inform_each = int(arguments['informEach'])
     model = NrpModel(arguments['data_path'])
+    if upper is not None:
+        model.update_cost_constraint(upper)
+    max_iterations = int(arguments['iterations'])
+    lower = lower or 0
 
     solver = SolverFactory(arguments['solver'])  # Create solver to use
     solver_supports_threads = solver.name in ['cbc', 'cplex']
@@ -101,10 +109,9 @@ def find_pareto_front(arguments: dict) -> List[RunResult]:
     results.append(run(model.model, solver, iteration))
 
     iteration += 1
-    max_iterations = int(arguments['iterations'])
     while (iteration < max_iterations) \
             and results[-1].profit > 0 \
-            and results[-1].cost > 0 \
+            and results[-1].cost > lower \
             and cost_l(results[-1].cost) \
             and profit_l(results[-1].profit):
 
@@ -112,9 +119,7 @@ def find_pareto_front(arguments: dict) -> List[RunResult]:
         results.append(run(model.model, solver, iteration))
 
         if iteration % inform_each == 0:
-            print('Iteration {}: Cost = {}, Profit = {}'.format(
-                iteration, results[-1].cost, results[-1].profit)
-            )
+            print(f'Iter: {iteration} | Cost: {results[-1].cost} | Profit: {results[-1].profit} | PID: {os.getpid()}')
         iteration += 1
     return results
 
@@ -135,7 +140,20 @@ def main(arguments: dict):
     :param arguments: CLI Arguments
     :type arguments: dict
     """
-    results = find_pareto_front(arguments)
+    print(f'El padre es {os.getpid()}')
+    if arguments['parallel'] == 'False':
+        results = find_pareto_front_in_cost_range(arguments)
+    else:
+        lower = 0
+        upper = 2000
+        args = [
+            (arguments, l, u) for l, u in pairwise(range(lower, upper, int((upper - lower) / SOLVER_THREADS)))
+        ]
+        [print(f'args is: {a[1:]}') for a in args]
+        with Pool(SOLVER_THREADS) as p:
+            nested_results = p.starmap(find_pareto_front_in_cost_range, args)
+            results = [item for sublist in nested_results for item in sublist]
+
     write_results(results)
 
 
@@ -164,6 +182,9 @@ def get_parser():
     parser.add_argument('--informEach', dest='informEach', default='10',
                         help='Defines how often the algorithm reports partial results.' +
                              '(default: 10 iterations)')
+    parser.add_argument('--parallel', dest='parallel', default='False',
+                        help='Defines if should be run in parallel' +
+                             '(default: False)')
     return parser.parse_args()
 
 
