@@ -8,12 +8,13 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from more_itertools import pairwise
+from itertools import pairwise
+from math import ceil
 from multiprocessing import Pool
-from typing import List, Dict
+from typing import List
 
 from pyomo.core.base.PyomoModel import Model
-from pyomo.environ import SolverFactory, summation
+from pyomo.environ import SolverFactory
 from pyomo.environ import value
 from pyomo.opt import OptSolver
 
@@ -23,7 +24,7 @@ START = 'start'
 DAT_LD = 'data_load'
 MD_RUN = 'model_run'
 PLOT = 'plot'
-SOLVER_THREADS = os.cpu_count()
+SOLVER_THREADS = 2
 
 
 class EnhancedJSONEncoder(json.JSONEncoder):
@@ -74,14 +75,11 @@ def run(concrete_model: Model, solver: OptSolver, current_iteration: int) -> Run
     for i in concrete_model.y.values():
         y += str(int(i.value))
 
-    x_as_hex = f'{int(x):x}'
-    y_as_hex = f'{int(y):x}'
-
     profits = value(concrete_model.OBJ)
     costs = value(concrete_model.cost_constraint)
 
     return RunResult.from_args(
-        current_iteration, profits, costs, x_as_hex, y_as_hex, t1 - t0
+        current_iteration, profits, costs, x, y, t1 - t0
     )
 
 
@@ -90,8 +88,7 @@ def find_pareto_front_in_cost_range(arguments: dict, lower: float = None, upper:
         return x > float(arguments['cost']) if arguments['cost'] else lambda x: True
 
     def profit_l(x):
-        return x > float(arguments['profit']
-                         ) if arguments['profit'] else lambda x: True
+        return x > float(arguments['profit']) if arguments['profit'] else lambda x: True
 
     print(f'Running find pareto between [{lower};{upper}] in {os.getpid()}')
 
@@ -128,14 +125,14 @@ def find_pareto_front_in_cost_range(arguments: dict, lower: float = None, upper:
     return results
 
 
-def write_results(results: List[RunResult]):
+def write_results(cli_args: dict, results: List[RunResult]):
     try:
         os.makedirs('./output')
     except OSError as exception:
         if exception.errno != errno.EEXIST:
             raise
 
-    with open('./output/result.json', 'w+') as file:
+    with open(f'./output/result_{cli_args["data_path"]}_{int(time.time())}.json', 'w+') as file:
         json.dump(results, file, cls=EnhancedJSONEncoder)
 
 
@@ -145,18 +142,27 @@ def main(arguments: dict):
     :type arguments: dict
     """
     lower = 0
-    upper = 2000
-    if arguments['parallel'] == 'False':
+    num_workers = int(arguments['workers'])
+
+    arguments_copy = arguments.copy()
+    arguments_copy['iterations'] = 1
+
+    print('Running first iteration to find max cost')
+    first_run, *_ = find_pareto_front_in_cost_range(arguments_copy, lower)
+    print(f'Finished first iteration. Max cost is {first_run.cost}')
+    upper = first_run.cost
+
+    if num_workers == 1:
         results = find_pareto_front_in_cost_range(arguments, lower=lower, upper=upper)
     else:
         args = [
-            (arguments, l, u) for l, u in pairwise(range(lower, upper, int((upper - lower) / SOLVER_THREADS)))
+            (arguments, l, u) for l, u in pairwise(range(lower, ceil(upper), int((upper - lower) / num_workers)))
         ]
-        with Pool(SOLVER_THREADS) as p:
+        with Pool(num_workers) as p:
             nested_results = p.starmap(find_pareto_front_in_cost_range, args)
             results = [item for sublist in nested_results for item in sublist]
 
-    write_results(results)
+    write_results(arguments, results)
 
 
 def get_parser():
@@ -184,9 +190,9 @@ def get_parser():
     parser.add_argument('--informEach', dest='informEach', default='10',
                         help='Defines how often the algorithm reports partial results.' +
                              '(default: 10 iterations)')
-    parser.add_argument('--parallel', dest='parallel', default='False',
-                        help='Defines if should be run in parallel' +
-                             '(default: False)')
+    parser.add_argument('--workers', dest='workers', default='1',
+                        help='How many workers to split the pareto front' +
+                             '(default: 1)')
     return parser.parse_args()
 
 
