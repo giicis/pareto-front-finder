@@ -8,7 +8,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from itertools import pairwise
+from more_itertools import pairwise
 from math import ceil
 from multiprocessing import Pool
 from typing import List

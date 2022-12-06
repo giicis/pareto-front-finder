@@ -1,2 +1,5 @@
 python main.py --solver cbc --iterations 200 --workers 16 --data  --epsilon   50160.31s user 816.67s system 1256% cpu 1:07:36.81 total
 python main.py --solver cbc --iterations 200 --workers 16 --data  --epsilon   19345.30s user 669.96s system 1390% cpu 23:59.49 total
+
+python main.py --solver cbc --iterations 500 --workers 4 --data nrp_100c_120r.dat --epsilon 1  159,35s user 9,93s system 231% cpu 1:13,11 total
+
